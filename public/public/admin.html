@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ניהול משחקי טריוויה</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; background: #f4f4f5; margin: 0; padding: 24px; direction: rtl; }
+  h1 { color: #26215c; }
+  .card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  input, button { font-size: 16px; padding: 10px; border-radius: 8px; border: 1px solid #ccc; }
+  button { background: #534ab7; color: white; border: none; cursor: pointer; font-weight: bold; }
+  button:hover { background: #3c3489; }
+  button.danger { background: #e24b4a; }
+  button.danger:hover { background: #a32d2d; }
+  .game-row { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #eee; }
+  .game-row:last-child { border-bottom: none; }
+  .code { font-family: monospace; font-size: 22px; font-weight: bold; background: #eeedfe; color: #26215c; padding: 4px 12px; border-radius: 6px; }
+  .badge { padding: 2px 10px; border-radius: 12px; font-size: 13px; }
+  .badge.waiting { background: #f1efe8; color: #444; }
+  .badge.active { background: #e1f5ee; color: #085041; }
+  .badge.finished { background: #faece7; color: #712b13; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th, td { text-align: right; padding: 8px; border-bottom: 1px solid #eee; }
+  .q-form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  .q-form input[type=text] { flex: 1; min-width: 200px; }
+  .q-form input[type=number] { width: 90px; }
+  a { color: #534ab7; text-decoration: none; }
+  .links { display: flex; gap: 12px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<h1>ניהול משחקי טריוויה</h1>
+
+<div class="card">
+  <h3>יצירת משחק חדש</h3>
+  <input type="text" id="newGameName" placeholder="שם המשחק (לא חובה)">
+  <button onclick="createGame()">צור משחק</button>
+</div>
+
+<div class="card">
+  <h3>משחקים קיימים</h3>
+  <div id="gamesList">טוען...</div>
+</div>
+
+<div class="card" id="editCard" style="display:none">
+  <h3>עריכת משחק <span class="code" id="editCode"></span></h3>
+  <div class="links">
+    <a id="controlLink" target="_blank">פתח עמוד שליטה למנחה</a>
+    <a id="displayLink" target="_blank">פתח מסך תצוגה</a>
+  </div>
+  <h4>שאלות</h4>
+  <table>
+    <thead><tr><th>#</th><th>שאלה</th><th>תשובה נכונה</th><th>ניקוד</th><th>שניות</th><th></th></tr></thead>
+    <tbody id="questionsTable"></tbody>
+  </table>
+  <div class="q-form">
+    <input type="text" id="qText" placeholder="טקסט השאלה">
+    <input type="text" id="qAnswer" placeholder="תשובה נכונה">
+    <input type="number" id="qPoints" placeholder="ניקוד" value="10">
+    <input type="number" id="qSeconds" placeholder="שניות" value="60">
+    <button onclick="addQuestion()">הוסף שאלה</button>
+  </div>
+
+  <h4>שחקנים רשומים</h4>
+  <table>
+    <thead><tr><th>שם</th><th>ניקוד</th></tr></thead>
+    <tbody id="playersTable"></tbody>
+  </table>
+</div>
+
+<script>
+let currentCode = null;
+
+async function loadGames() {
+  const res = await fetch('/api/admin/games');
+  const games = await res.json();
+  const el = document.getElementById('gamesList');
+  if (games.length === 0) {
+    el.innerHTML = '<p>אין משחקים עדיין</p>';
+    return;
+  }
+  el.innerHTML = games.map(g => `
+    <div class="game-row">
+      <div>
+        <span class="code">${g.code}</span>
+        <strong>${escapeHtml(g.name)}</strong>
+        <span class="badge ${g.status}">${statusLabel(g.status)}</span>
+      </div>
+      <div>
+        <button onclick="editGame('${g.code}')">ערוך</button>
+        <button class="danger" onclick="deleteGame('${g.code}')">מחק</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function statusLabel(s) {
+  return { waiting: 'ממתין', active: 'פעיל', finished: 'הסתיים' }[s] || s;
+}
+
+async function createGame() {
+  const name = document.getElementById('newGameName').value;
+  await fetch('/api/admin/games', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name })
+  });
+  document.getElementById('newGameName').value = '';
+  loadGames();
+}
+
+async function deleteGame(code) {
+  if (!confirm('למחוק את המשחק?')) return;
+  await fetch('/api/admin/games/' + code, { method: 'DELETE' });
+  if (currentCode === code) document.getElementById('editCard').style.display = 'none';
+  loadGames();
+}
+
+async function editGame(code) {
+  currentCode = code;
+  const res = await fetch('/api/admin/games/' + code);
+  const game = await res.json();
+  document.getElementById('editCard').style.display = 'block';
+  document.getElementById('editCode').textContent = code;
+  document.getElementById('controlLink').href = '/control.html?code=' + code;
+  document.getElementById('displayLink').href = '/display.html?code=' + code;
+
+  document.getElementById('questionsTable').innerHTML = game.questions.map((q, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${escapeHtml(q.text)}</td>
+      <td>${escapeHtml(q.correctAnswerText)}</td>
+      <td>${q.points}</td>
+      <td>${q.timerSeconds}</td>
+      <td><button class="danger" onclick="deleteQuestion(${i})">מחק</button></td>
+    </tr>
+  `).join('');
+
+  const players = Object.values(game.players).sort((a, b) => b.score - a.score);
+  document.getElementById('playersTable').innerHTML = players.map(p => `
+    <tr><td>${escapeHtml(p.name)}</td><td>${p.score}</td></tr>
+  `).join('') || '<tr><td colspan="2">אין שחקנים רשומים עדיין</td></tr>';
+
+  window.scrollTo({ top: document.getElementById('editCard').offsetTop, behavior: 'smooth' });
+}
+
+async function addQuestion() {
+  const text = document.getElementById('qText').value;
+  const correctAnswerText = document.getElementById('qAnswer').value;
+  const points = document.getElementById('qPoints').value;
+  const timerSeconds = document.getElementById('qSeconds').value;
+  if (!text || !correctAnswerText) { alert('חסר טקסט שאלה או תשובה'); return; }
+  await fetch('/api/admin/games/' + currentCode + '/questions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, correctAnswerText, points, timerSeconds })
+  });
+  document.getElementById('qText').value = '';
+  document.getElementById('qAnswer').value = '';
+  editGame(currentCode);
+}
+
+async function deleteQuestion(index) {
+  await fetch('/api/admin/games/' + currentCode + '/questions/' + index, { method: 'DELETE' });
+  editGame(currentCode);
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+loadGames();
+setInterval(loadGames, 5000);
+</script>
+</body>
+</html>
