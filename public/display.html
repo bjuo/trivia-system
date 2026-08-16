@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>מסך תצוגה - טריוויה</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: Arial, sans-serif; background: #0f0f1a; color: white;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; direction: rtl; overflow: hidden;
+  }
+  .game-name { position: absolute; top: 24px; right: 32px; font-size: 22px; color: #aaa; }
+  .waiting-screen { display: flex; flex-direction: column; align-items: center; }
+  .join-code { font-size: 120px; font-weight: bold; letter-spacing: 12px; color: #7f77dd; margin: 20px 0; }
+  .join-instructions { font-size: 28px; color: #ccc; margin-bottom: 40px; }
+  .players-grid { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; max-width: 1000px; }
+  .player-chip { background: #26215c; color: #cecbf6; padding: 10px 22px; border-radius: 24px; font-size: 22px; }
+
+  .question-screen { max-width: 1100px; }
+  .question-number { font-size: 24px; color: #7f77dd; margin-bottom: 20px; }
+  .question-text { font-size: 48px; line-height: 1.5; }
+
+  .split-screen { display: flex; width: 100%; height: 100vh; align-items: center; }
+  .split-half { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; height: 100%; }
+  .split-half.question { border-left: 1px solid #333; }
+  .timer-circle { width: 280px; height: 280px; border-radius: 50%; border: 10px solid #ef9f27; display: flex; align-items: center; justify-content: center; font-size: 90px; font-weight: bold; color: #ef9f27; }
+  .split-question-text { font-size: 32px; line-height: 1.5; }
+
+  .reveal-screen .label { font-size: 28px; color: #aaa; }
+  .reveal-answer { font-size: 64px; font-weight: bold; color: #5dcaa5; margin-top: 20px; max-width: 1000px; }
+
+  .finished-screen .final-title { font-size: 40px; color: #aaa; margin-bottom: 30px; }
+  .leaderboard { display: flex; flex-direction: column; gap: 10px; width: 600px; }
+  .lb-row { display: flex; justify-content: space-between; background: #1c1c2e; padding: 14px 24px; border-radius: 10px; font-size: 26px; }
+  .lb-row.first { background: #412402; color: #fac775; }
+</style>
+</head>
+<body>
+<div class="game-name" id="gameName"></div>
+<div id="content"></div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const code = params.get('code');
+let audioCtx = null;
+let tickInterval = null;
+let lastPhase = null;
+
+function startTickSound() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  stopTickSound();
+  tickInterval = setInterval(() => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.1);
+  }, 1000);
+}
+
+function stopTickSound() {
+  if (tickInterval) { clearInterval(tickInterval); tickInterval = null; }
+}
+
+function playRevealSound() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  [523, 659, 784].forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.1, audioCtx.currentTime + i * 0.12);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + i * 0.12 + 0.3);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(audioCtx.currentTime + i * 0.12);
+    osc.stop(audioCtx.currentTime + i * 0.12 + 0.3);
+  });
+}
+
+async function refresh() {
+  const res = await fetch('/api/display/' + code);
+  if (!res.ok) return;
+  const g = await res.json();
+  render(g);
+}
+
+function render(g) {
+  document.getElementById('gameName').textContent = g.name;
+  const content = document.getElementById('content');
+
+  if (g.phase !== lastPhase) {
+    if (g.phase === 'timer') startTickSound(); else stopTickSound();
+    if (g.phase === 'reveal' && lastPhase === 'timer') playRevealSound();
+    lastPhase = g.phase;
+  }
+
+  if (g.status === 'finished') {
+    content.innerHTML = `
+      <div class="finished-screen">
+        <div class="final-title">המשחק הסתיים - תוצאות סופיות</div>
+        <div class="leaderboard">
+          ${g.players.slice(0, 10).map((p, i) => `
+            <div class="lb-row ${i === 0 ? 'first' : ''}">
+              <span>${i + 1}. ${escapeHtml(p.name)}</span>
+              <span>${p.score}</span>
+            </div>`).join('')}
+        </div>
+      </div>`;
+    return;
+  }
+
+  if (g.phase === 'idle') {
+    content.innerHTML = `
+      <div class="waiting-screen">
+        <div class="join-instructions">התקשרו למספר המערכת והקישו את הקוד</div>
+        <div class="join-code">${g.code}</div>
+        <div class="players-grid">
+          ${g.players.map(p => `<div class="player-chip">${escapeHtml(p.name)}</div>`).join('')}
+        </div>
+      </div>`;
+    return;
+  }
+
+  if (g.phase === 'question') {
+    content.innerHTML = `
+      <div class="question-screen">
+        <div class="question-number">שאלה ${g.questionNumber} מתוך ${g.totalQuestions}</div>
+        <div class="question-text">${escapeHtml(g.questionText)}</div>
+      </div>`;
+    return;
+  }
+
+  if (g.phase === 'timer') {
+    const remaining = Math.max(0, Math.ceil((g.timerEndsAt - Date.now()) / 1000));
+    content.innerHTML = `
+      <div class="split-screen">
+        <div class="split-half question">
+          <div class="split-question-text">${escapeHtml(g.questionText)}</div>
+        </div>
+        <div class="split-half">
+          <div class="timer-circle">${remaining}</div>
+        </div>
+      </div>`;
+    return;
+  }
+
+  if (g.phase === 'reveal') {
+    content.innerHTML = `
+      <div class="reveal-screen">
+        <div class="label">התשובה הנכונה</div>
+        <div class="reveal-answer">${escapeHtml(g.correctAnswerText)}</div>
+      </div>`;
+    return;
+  }
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+refresh();
+setInterval(refresh, 1500);
+</script>
+</body>
+</html>
